@@ -413,7 +413,7 @@ jobs:
       - name: Build Alderis
         run: |
           cd Alderis
-          make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless ARCHS=arm64
+          make clean package DEBUG=0 FINALPACKAGE=1 ARCHS=arm64
           mv packages/*.deb ${{ github.workspace }}/alderis.deb
 
       - name: Build iSponsorBlock

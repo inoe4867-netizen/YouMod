@@ -96,6 +96,7 @@ jobs:
           git sparse-checkout set --no-cone iPhoneOS18.6.sdk
           git checkout
           mv *.sdk $THEOS/sdks
+          ln -s "$THEOS/sdks/iPhoneOS18.6.sdk" "$THEOS/sdks/iPhoneOS16.5.sdk"
 
       - name: Install cyan and tbd
         run: |
@@ -154,7 +155,7 @@ jobs:
 
       - name: Clone YouMute
         run: git clone --quiet --depth=1 https://github.com/PoomSmart/YouMute.git
-        
+
       - name: Patch YouMute Preview Mute Fix
         run: |
           cd YouMute
@@ -167,7 +168,10 @@ jobs:
           s = p.read_text()
 
           if "#import <objc/runtime.h>" not in s:
-              s = s.replace("#import <YouTubeHeader/YTSingleVideoController.h>", "#import <YouTubeHeader/YTSingleVideoController.h>\n#import <objc/runtime.h>")
+              s = s.replace(
+                  "#import <YouTubeHeader/YTSingleVideoController.h>",
+                  "#import <YouTubeHeader/YTSingleVideoController.h>\n#import <objc/runtime.h>"
+              )
 
           bottom_helper = r'''static YTSingleVideoController *youmuteVideoFromInlineBar(YTInlinePlayerBarContainerView *bar) {
             id delegate = nil;

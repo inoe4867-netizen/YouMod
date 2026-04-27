@@ -154,6 +154,145 @@ jobs:
 
       - name: Clone YouMute
         run: git clone --quiet --depth=1 https://github.com/PoomSmart/YouMute.git
+        
+      - name: Patch YouMute Preview Mute Fix
+        run: |
+          cd YouMute
+
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("Tweak.x")
+          s = p.read_text()
+
+          if "#import <objc/runtime.h>" not in s:
+              s = s.replace("#import <YouTubeHeader/YTSingleVideoController.h>", "#import <YouTubeHeader/YTSingleVideoController.h>\n#import <objc/runtime.h>")
+
+          bottom_helper = r'''static YTSingleVideoController *youmuteVideoFromInlineBar(YTInlinePlayerBarContainerView *bar) {
+            id delegate = nil;
+
+            @try {
+              delegate = [bar valueForKey:@"delegate"];
+            } @catch (__unused NSException *e) {}
+
+            NSArray *keys = @[
+              @"_currentSingleVideo",
+              @"currentSingleVideo",
+              @"_currentSingleVideoObservable",
+              @"currentSingleVideoObservable",
+              @"_singleVideo",
+              @"singleVideo",
+              @"_singleVideoController",
+              @"singleVideoController",
+              @"_video",
+              @"video"
+            ];
+
+            for (NSString *key in keys) {
+              id candidate = nil;
+
+              @try {
+                candidate = [delegate valueForKey:key];
+              } @catch (__unused NSException *e) {}
+
+              if ([candidate respondsToSelector:@selector(isMuted)] && [candidate respondsToSelector:@selector(setMuted:)]) {
+                return (YTSingleVideoController *)candidate;
+              }
+            }
+
+            if (delegate) {
+              unsigned int count = 0;
+              Ivar *ivars = class_copyIvarList([delegate class], &count);
+
+              for (unsigned int i = 0; i < count; i++) {
+                const char *type = ivar_getTypeEncoding(ivars[i]);
+
+                if (!type || type[0] != '@') {
+                  continue;
+                }
+
+                id candidate = nil;
+
+                @try {
+                  candidate = object_getIvar(delegate, ivars[i]);
+                } @catch (__unused NSException *e) {}
+
+                if ([candidate respondsToSelector:@selector(isMuted)] && [candidate respondsToSelector:@selector(setMuted:)]) {
+                  free(ivars);
+                  return (YTSingleVideoController *)candidate;
+                }
+              }
+
+              free(ivars);
+            }
+
+            return nil;
+          }
+
+          static BOOL isMutedBottom(YTInlinePlayerBarContainerView *self) {
+            YTSingleVideoController *video = youmuteVideoFromInlineBar(self);
+            return video ? [video isMuted] : NO;
+          }
+
+          static BOOL shouldMute()'''
+
+          s, count = re.subn(
+              r'static BOOL isMutedBottom\(YTInlinePlayerBarContainerView \*self\) \{.*?\n\}\s*\nstatic BOOL shouldMute\(\)',
+              bottom_helper,
+              s,
+              count=1,
+              flags=re.S
+          )
+
+          if count != 1:
+              raise SystemExit("Could not patch isMutedBottom. YouMute Tweak.x changed upstream.")
+
+          bottom_method = r'''%new(v@:@)
+          - (void)didPressMute:(id)arg {
+            YTSingleVideoController *video = youmuteVideoFromInlineBar(self);
+
+            if (!video) {
+              return;
+            }
+
+            BOOL muteStatus = ![video isMuted];
+
+            [[NSUserDefaults standardUserDefaults] setBool:muteStatus forKey:KeepMutedKey];
+            [[NSUserDefaults standardUserDefaults] synchronize];
+
+            [video setMuted:muteStatus];
+
+            UIButton *button = self.overlayButtons[TweakKey];
+
+            if (button) {
+              [button setImage:muteImage([video isMuted]) forState:UIControlStateNormal];
+            }
+          }
+
+          %end'''
+
+          marker = "%group Bottom"
+
+          if marker not in s:
+              raise SystemExit("Could not find YouMute Bottom group.")
+
+          before, after = s.split(marker, 1)
+
+          after, count = re.subn(
+              r'%new\(v@:@\)\s*-\s*\(void\)didPressMute:\(id\)arg \{.*?\n\}\s*\n%end',
+              bottom_method,
+              after,
+              count=1,
+              flags=re.S
+          )
+
+          if count != 1:
+              raise SystemExit("Could not patch bottom didPressMute. YouMute Tweak.x changed upstream.")
+
+          p.write_text(before + marker + after)
+          print("Patched YouMute inline preview mute handling.")
+          PY
 
       - name: Clone YouLoop
         run: git clone --quiet --depth=1 https://github.com/bhackel/YouLoop.git

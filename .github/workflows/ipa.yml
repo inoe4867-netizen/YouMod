@@ -159,7 +159,7 @@ jobs:
       - name: Hide Sensitive Inputs
         uses: levibostian/action-hide-sensitive-inputs@v1
         with:
-          exclude_inputs: bundle_id,display_name,youpip,ytuhd,ryd,abconfig,youquality,youspeed,youmute,youloop,ytweaks,youslider,ytholdspeed,youchoose,youshare,gonerino,getcap,demc,ytshare,volboost
+          exclude_inputs: bundle_id,display_name,youpip,ytuhd,ryd,abconfig,youquality,youspeed,youmute,youloop,ytweaks,youslider,ytholdspeed,youchoose,youshare,gonerino,getcap,demc,ytshare,volboost,isponsorblock
           
       - name: Install MEGA downloader
         if: ${{ startsWith(inputs.ipa_url, 'https://mega.nz/') }}
@@ -355,6 +355,11 @@ jobs:
       - name: Clone VolumeBoostYT
         if: ${{ inputs.volboost }}
         run: git clone --quiet --depth=1 https://github.com/VasirakCalgux/VolumeBoostYT.git
+      
+      - name: Clone Alderis and iSponsorBlock
+        run: |
+          git clone --quiet --depth=1 https://github.com/hbang/Alderis.git
+          git clone --quiet --depth=1 --recurse-submodules https://github.com/Galactic-Dev/iSponsorBlock.git
 
       - name: Build YouMod
         run: |
@@ -362,13 +367,24 @@ jobs:
           echo "YOUMOD_VERSION=$(grep '^Version:' control | cut -d ' ' -f2)" >> $GITHUB_ENV
           make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
           mv packages/*.deb ${{ github.workspace }}/youmod.deb
-        
-      - name: Build YouPiP
-        if: ${{ inputs.youpip }}
+
+      - name: Build Alderis for iSponsorBlock
         run: |
-          cd YouPiP
-          make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
-          mv packages/*.deb ${{ github.workspace }}/youpip.deb
+          cd Alderis
+          make clean package DEBUG=0 FINALPACKAGE=1 ARCHS=arm64 TARGET=iphone:clang:18.6:13.0
+          mv packages/*.deb "$GITHUB_WORKSPACE/alderis.deb"
+
+      - name: Build iSponsorBlock
+        run: |
+          cd iSponsorBlock
+          make clean package DEBUG=0 FINALPACKAGE=1 ROOTLESS=1 ARCHS=arm64 TARGET=iphone:clang:18.6:13.0
+          mv packages/*.deb "$GITHUB_WORKSPACE/isponsorblock.deb"
+            - name: Build YouPiP
+              if: ${{ inputs.youpip }}
+              run: |
+                cd YouPiP
+                make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+                mv packages/*.deb ${{ github.workspace }}/youpip.deb
 
       - name: Build YTUHD
         if: ${{ inputs.ytuhd }}

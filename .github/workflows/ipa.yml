@@ -131,7 +131,13 @@ on:
         default: true
         required: false
         type: boolean
-
+        
+      isponsorblock:
+        description: "Integrate iSponsorBlock"
+        default: true
+        required: false
+        type: boolean
+        
       volboost:
         description: "Integrate VolumeBoostYT (Require iOS 16+)"
         default: true

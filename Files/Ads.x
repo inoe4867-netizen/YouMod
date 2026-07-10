@@ -12,6 +12,7 @@ static BOOL isProductList(YTICommand *command) {
 NSString *getAdString(NSString *description) {
     for (NSString *str in @[
         @"brand_promo",
+        @"brand_video_shelf",
         @"carousel_footered_layout",
         @"carousel_headered_layout",
         @"eml.expandable_metadata",
@@ -128,6 +129,23 @@ static NSMutableArray <YTIItemSectionRenderer *> *filteredArray(NSArray <YTIItem
         return nil;
     return model;
 }
+%end
+
+// Filter ads created through the newer Shorts model path.@
+// Current YouTube-X uses this hook for newer YouTube versions.
+%hook YTReelContentModel
+
++ (YTReelModel *)makeContentModelForEntry:(id)entry {
+    YTReelModel *model = %orig;
+
+    if ([model respondsToSelector:@selector(videoType)] &&
+        model.videoType == 3) {
+        return nil;
+    }
+
+    return model;
+}
+
 %end
 
 %hook YTReelInfinitePlaybackDataSource

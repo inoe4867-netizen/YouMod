@@ -369,9 +369,10 @@ jobs:
           mv packages/*.deb ${{ github.workspace }}/youmod.deb
 
       - name: Build Alderis for iSponsorBlock
+        if: $ inputs.isponsorblock 
         run: |
           cd Alderis
-          make clean package DEBUG=0 FINALPACKAGE=1 ARCHS=arm64 TARGET=iphone:clang:18.6:13.0
+          make clean package DEBUG=0 FINALPACKAGE=1 ARCHS=arm64 TARGET=iphone:clang:18.6:15.0
           mv packages/*.deb "$GITHUB_WORKSPACE/alderis.deb"
 
       - name: Build iSponsorBlock

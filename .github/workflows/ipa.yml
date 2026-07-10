@@ -379,12 +379,12 @@ jobs:
           cd iSponsorBlock
           make clean package DEBUG=0 FINALPACKAGE=1 ROOTLESS=1 ARCHS=arm64 TARGET=iphone:clang:18.6:13.0
           mv packages/*.deb "$GITHUB_WORKSPACE/isponsorblock.deb"
-            - name: Build YouPiP
-              if: ${{ inputs.youpip }}
-              run: |
-                cd YouPiP
-                make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
-                mv packages/*.deb ${{ github.workspace }}/youpip.deb
+
+      - name: Build YouPiP
+        run: |
+          cd YouPiP
+          make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          mv packages/*.deb "$GITHUB_WORKSPACE/youpip.deb"
 
       - name: Build YTUHD
         if: ${{ inputs.ytuhd }}

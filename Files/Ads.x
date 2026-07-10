@@ -47,18 +47,96 @@ static BOOL isAdRenderer(YTIElementRenderer *elementRenderer, int kind) {
     }
 
     NSString *description = [elementRenderer description];
-    NSString *adString = getAdString(description);
-    if (adString) {
+    return getAdString(description) != nil;
+}
+
+static BOOL YouModIsStrongShortsAdMarker(NSString *value) {
+    if (![value isKindOfClass:[NSString class]] || value.length == 0) {
+        return NO;
+    }
+
+    NSString *normalized = [[value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] lowercaseString];
+
+    if ([normalized hasPrefix:@"sponsored"] ||
+        [normalized containsString:@"visit advertiser"] ||
+        [normalized containsString:@"advertiser website"]) {
+        return YES;
+    }
+
+    if ([normalized containsString:@"ad_badge"] ||
+        [normalized containsString:@"adbadge"] ||
+        [normalized containsString:@"shorts_ad"] ||
+        [normalized containsString:@"shorts.ad"] ||
+        [normalized containsString:@"reel_ad"] ||
+        [normalized containsString:@"reel.ad"] ||
+        [normalized containsString:@"promoted"] ||
+        [normalized containsString:@"sponsored"]) {
         return YES;
     }
 
     return NO;
 }
 
+static UIViewController *YouModFindShortsAdvanceController(UIView *view) {
+    UIViewController *controller = [view _viewControllerForAncestor];
+    SEL advanceSelector = @selector(reelContentViewRequestsAdvanceToNextVideo:);
+
+    while (controller) {
+        if ([controller respondsToSelector:advanceSelector]) {
+            return controller;
+        }
+        controller = controller.parentViewController;
+    }
+
+    return nil;
+}
+
+static void YouModTrySeamlessShortsAdSkip(UIView *view, NSString *additionalText) {
+    if (!view || !view.window) {
+        return;
+    }
+
+    BOOL hasAdMarker = YouModIsStrongShortsAdMarker(additionalText) ||
+        YouModIsStrongShortsAdMarker(view.accessibilityLabel) ||
+        YouModIsStrongShortsAdMarker(view.accessibilityIdentifier);
+
+    if (!hasAdMarker) {
+        return;
+    }
+
+    UIViewController *controller = YouModFindShortsAdvanceController(view);
+    if (!controller) {
+        return;
+    }
+
+    static NSTimeInterval lastSkipTime = 0;
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+
+    // Prevent multiple labels belonging to one ad from causing multiple advances.
+    if (now - lastSkipTime < 0.85) {
+        return;
+    }
+    lastSkipTime = now;
+
+    SEL advanceSelector = @selector(reelContentViewRequestsAdvanceToNextVideo:);
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (![controller respondsToSelector:advanceSelector] || !controller.view.window) {
+            return;
+        }
+
+        [UIView performWithoutAnimation:^{
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            [controller performSelector:advanceSelector withObject:nil];
+#pragma clang diagnostic pop
+        }];
+    });
+}
+
 // Globally remove element renderers identified as ads.
 // Adapted from the YouTube Plus/YTLite filtering strategy.
 %hook YTIElementRenderer
-
 - (NSData *)elementData {
     if ([self respondsToSelector:@selector(hasCompatibilityOptions)] &&
         self.hasCompatibilityOptions &&
@@ -66,14 +144,25 @@ static BOOL isAdRenderer(YTIElementRenderer *elementRenderer, int kind) {
         return nil;
     }
 
-    NSString *description = [self description];
-    if (getAdString(description)) {
+    if (getAdString([self description])) {
         return [NSData data];
     }
 
     return %orig;
 }
+%end
 
+// Fallback for ad labels rendered as ordinary UIKit labels.
+%hook UILabel
+- (void)setText:(NSString *)text {
+    %orig;
+    YouModTrySeamlessShortsAdSkip(self, text);
+}
+
+- (void)didMoveToWindow {
+    %orig;
+    YouModTrySeamlessShortsAdSkip(self, self.text);
+}
 %end
 
 static NSMutableArray *filteredArray(NSArray *array) {
@@ -84,8 +173,7 @@ static NSMutableArray *filteredArray(NSArray *array) {
             YTIHorizontalListRenderer *horizontalListRenderer = content.horizontalListRenderer;
             NSMutableArray *itemsArray = horizontalListRenderer.itemsArray;
             NSIndexSet *removeItemsArrayIndexes = [itemsArray indexesOfObjectsPassingTest:^BOOL(YTIHorizontalListSupportedRenderers *horizontalListSupportedRenderers, NSUInteger idx2, BOOL *stop2) {
-                YTIElementRenderer *elementRenderer = horizontalListSupportedRenderers.elementRenderer;
-                return isAdRenderer(elementRenderer, 4);
+                return isAdRenderer(horizontalListSupportedRenderers.elementRenderer, 4);
             }];
             [itemsArray removeObjectsAtIndexes:removeItemsArrayIndexes];
         }
@@ -97,15 +185,13 @@ static NSMutableArray *filteredArray(NSArray *array) {
         NSMutableArray *contentsArray = sectionRenderer.contentsArray;
         if (contentsArray.count > 1) {
             NSIndexSet *removeContentsArrayIndexes = [contentsArray indexesOfObjectsPassingTest:^BOOL(YTIItemSectionSupportedRenderers *sectionSupportedRenderers, NSUInteger idx2, BOOL *stop2) {
-                YTIElementRenderer *elementRenderer = sectionSupportedRenderers.elementRenderer;
-                return isAdRenderer(elementRenderer, 3);
+                return isAdRenderer(sectionSupportedRenderers.elementRenderer, 3);
             }];
             [contentsArray removeObjectsAtIndexes:removeContentsArrayIndexes];
         }
 
         YTIItemSectionSupportedRenderers *firstObject = [contentsArray firstObject];
-        YTIElementRenderer *elementRenderer = firstObject.elementRenderer;
-        return isAdRenderer(elementRenderer, 2);
+        return isAdRenderer(firstObject.elementRenderer, 2);
     }];
 
     [newArray removeObjectsAtIndexes:removeIndexes];
@@ -187,7 +273,6 @@ static NSMutableArray *filteredArray(NSArray *array) {
 }
 %end
 
-// Filter ads created through the newer Shorts model path.
 %hook YTReelContentModel
 + (YTReelModel *)makeContentModelForEntry:(id)entry {
     YTReelModel *model = %orig;
@@ -266,6 +351,9 @@ static NSMutableArray *filteredArray(NSArray *array) {
     if ([self.accessibilityIdentifier isEqualToString:@"eml.ad_layout.full_width_square_image_layout"]) {
         self.hidden = YES;
     }
+
+    // AsyncDisplayKit-backed Shorts labels often expose ad status through accessibility metadata.
+    YouModTrySeamlessShortsAdSkip(self, nil);
 }
 %end
 
@@ -319,12 +407,10 @@ static NSMutableArray *filteredArray(NSArray *array) {
 }
 %end
 
-// "Try new features" in settings
 %hook YTSettingsSectionItemManager
 - (void)updatePremiumEarlyAccessSectionWithEntry:(id)arg1 {}
 %end
 
-// Survey
 %hook YTSurveyController
 - (void)showSurveyWithRenderer:(id)arg1 surveyParentResponder:(id)arg2 {}
 %end

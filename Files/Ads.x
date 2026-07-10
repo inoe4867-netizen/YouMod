@@ -8,7 +8,22 @@ static BOOL isProductList(YTICommand *command) {
     }
     return NO;
 }
+static BOOL isAdRenderer(YTIElementRenderer *elementRenderer, int kind) {
+    if ([elementRenderer respondsToSelector:@selector(hasCompatibilityOptions)] &&
+        elementRenderer.hasCompatibilityOptions &&
+        elementRenderer.compatibilityOptions.hasAdLoggingData) {
+        return YES;
+    }
 
+    NSString *description = [elementRenderer description];
+    NSString *adString = getAdString(description);
+
+    if (adString) {
+        return YES;
+    }
+
+    return NO;
+}
 NSString *getAdString(NSString *description) {
     for (NSString *str in @[
         @"brand_promo",

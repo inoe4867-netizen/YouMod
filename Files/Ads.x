@@ -12,14 +12,12 @@ static BOOL isProductList(YTICommand *command) {
 NSString *getAdString(NSString *description) {
     for (NSString *str in @[
         @"brand_promo",
-        @"brand_video_shelf",
         @"carousel_footered_layout",
         @"carousel_headered_layout",
         @"eml.expandable_metadata",
         @"feed_ad_metadata",
         @"full_width_portrait_image_layout",
         @"full_width_square_image_layout",
-        @"grid_ads_image_layout",
         @"landscape_image_wide_button_layout",
         @"post_shelf",
         @"product_carousel",
@@ -33,137 +31,22 @@ NSString *getAdString(NSString *description) {
         @"text_search_ad",
         @"video_display_full_layout",
         @"video_display_full_buttoned_layout"
-    ]) {
+    ])
         if ([description containsString:str]) return str;
-    }
     return nil;
 }
 
 static BOOL isAdRenderer(YTIElementRenderer *elementRenderer, int kind) {
-    if ([elementRenderer respondsToSelector:@selector(hasCompatibilityOptions)] &&
-        elementRenderer.hasCompatibilityOptions &&
-        elementRenderer.compatibilityOptions.hasAdLoggingData) {
+    if ([elementRenderer respondsToSelector:@selector(hasCompatibilityOptions)] && elementRenderer.hasCompatibilityOptions && elementRenderer.compatibilityOptions.hasAdLoggingData) {
         return YES;
     }
-
     NSString *description = [elementRenderer description];
-    return getAdString(description) != nil;
-}
-
-static BOOL YouModIsStrongShortsAdMarker(NSString *value) {
-    if (![value isKindOfClass:[NSString class]] || value.length == 0) {
-        return NO;
-    }
-
-    NSString *normalized = [[value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] lowercaseString];
-
-    if ([normalized hasPrefix:@"sponsored"] ||
-        [normalized containsString:@"visit advertiser"] ||
-        [normalized containsString:@"advertiser website"]) {
+    NSString *adString = getAdString(description);
+    if (adString) {
         return YES;
     }
-
-    if ([normalized containsString:@"ad_badge"] ||
-        [normalized containsString:@"adbadge"] ||
-        [normalized containsString:@"shorts_ad"] ||
-        [normalized containsString:@"shorts.ad"] ||
-        [normalized containsString:@"reel_ad"] ||
-        [normalized containsString:@"reel.ad"] ||
-        [normalized containsString:@"promoted"] ||
-        [normalized containsString:@"sponsored"]) {
-        return YES;
-    }
-
     return NO;
 }
-
-static UIViewController *YouModFindShortsAdvanceController(UIView *view) {
-    UIViewController *controller = [view _viewControllerForAncestor];
-    SEL advanceSelector = @selector(reelContentViewRequestsAdvanceToNextVideo:);
-
-    while (controller) {
-        if ([controller respondsToSelector:advanceSelector]) {
-            return controller;
-        }
-        controller = controller.parentViewController;
-    }
-
-    return nil;
-}
-
-static void YouModTrySeamlessShortsAdSkip(UIView *view, NSString *additionalText) {
-    if (!view || !view.window) {
-        return;
-    }
-
-    BOOL hasAdMarker = YouModIsStrongShortsAdMarker(additionalText) ||
-        YouModIsStrongShortsAdMarker(view.accessibilityLabel) ||
-        YouModIsStrongShortsAdMarker(view.accessibilityIdentifier);
-
-    if (!hasAdMarker) {
-        return;
-    }
-
-    UIViewController *controller = YouModFindShortsAdvanceController(view);
-    if (!controller) {
-        return;
-    }
-
-    static NSTimeInterval lastSkipTime = 0;
-    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-
-    // Prevent multiple labels belonging to one ad from causing multiple advances.
-    if (now - lastSkipTime < 0.85) {
-        return;
-    }
-    lastSkipTime = now;
-
-    SEL advanceSelector = @selector(reelContentViewRequestsAdvanceToNextVideo:);
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (![controller respondsToSelector:advanceSelector] || !controller.view.window) {
-            return;
-        }
-
-        [UIView performWithoutAnimation:^{
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-            [controller performSelector:advanceSelector withObject:nil];
-#pragma clang diagnostic pop
-        }];
-    });
-}
-
-// Globally remove element renderers identified as ads.
-// Adapted from the YouTube Plus/YTLite filtering strategy.
-%hook YTIElementRenderer
-- (NSData *)elementData {
-    if ([self respondsToSelector:@selector(hasCompatibilityOptions)] &&
-        self.hasCompatibilityOptions &&
-        self.compatibilityOptions.hasAdLoggingData) {
-        return nil;
-    }
-
-    if (getAdString([self description])) {
-        return [NSData data];
-    }
-
-    return %orig;
-}
-%end
-
-// Fallback for ad labels rendered as ordinary UIKit labels.
-%hook UILabel
-- (void)setText:(NSString *)text {
-    %orig;
-    YouModTrySeamlessShortsAdSkip(self, text);
-}
-
-- (void)didMoveToWindow {
-    %orig;
-    YouModTrySeamlessShortsAdSkip(self, self.text);
-}
-%end
 
 static NSMutableArray *filteredArray(NSArray *array) {
     NSMutableArray *newArray = [array mutableCopy];
@@ -173,86 +56,61 @@ static NSMutableArray *filteredArray(NSArray *array) {
             YTIHorizontalListRenderer *horizontalListRenderer = content.horizontalListRenderer;
             NSMutableArray *itemsArray = horizontalListRenderer.itemsArray;
             NSIndexSet *removeItemsArrayIndexes = [itemsArray indexesOfObjectsPassingTest:^BOOL(YTIHorizontalListSupportedRenderers *horizontalListSupportedRenderers, NSUInteger idx2, BOOL *stop2) {
-                return isAdRenderer(horizontalListSupportedRenderers.elementRenderer, 4);
+                YTIElementRenderer *elementRenderer = horizontalListSupportedRenderers.elementRenderer;
+                return isAdRenderer(elementRenderer, 4);
             }];
             [itemsArray removeObjectsAtIndexes:removeItemsArrayIndexes];
         }
-
-        if (![sectionRenderer isKindOfClass:%c(YTIItemSectionRenderer)]) {
+        if (![sectionRenderer isKindOfClass:%c(YTIItemSectionRenderer)])
             return NO;
-        }
-
         NSMutableArray *contentsArray = sectionRenderer.contentsArray;
         if (contentsArray.count > 1) {
             NSIndexSet *removeContentsArrayIndexes = [contentsArray indexesOfObjectsPassingTest:^BOOL(YTIItemSectionSupportedRenderers *sectionSupportedRenderers, NSUInteger idx2, BOOL *stop2) {
-                return isAdRenderer(sectionSupportedRenderers.elementRenderer, 3);
+                YTIElementRenderer *elementRenderer = sectionSupportedRenderers.elementRenderer;
+                return isAdRenderer(elementRenderer, 3);
             }];
             [contentsArray removeObjectsAtIndexes:removeContentsArrayIndexes];
         }
-
         YTIItemSectionSupportedRenderers *firstObject = [contentsArray firstObject];
-        return isAdRenderer(firstObject.elementRenderer, 2);
+        YTIElementRenderer *elementRenderer = firstObject.elementRenderer;
+        return isAdRenderer(elementRenderer, 2);
     }];
-
     [newArray removeObjectsAtIndexes:removeIndexes];
     return newArray;
 }
 
 %hook YTPlayerResponse
 %new(@@:)
-- (NSMutableArray *)playerAdsArray {
-    return [NSMutableArray array];
-}
-
+- (NSMutableArray *)playerAdsArray { return [NSMutableArray array]; }
 %new(@@:)
-- (NSMutableArray *)adSlotsArray {
-    return [NSMutableArray array];
-}
+- (NSMutableArray *)adSlotsArray { return [NSMutableArray array]; }
 %end
 
 %hook YTIClientMdxGlobalConfig
 %new(B@:)
-- (BOOL)enableSkippableAd {
-    return YES;
-}
+- (BOOL)enableSkippableAd { return YES; }
 %end
 
 %hook YTAdShieldUtils
-+ (id)spamSignalsDictionary {
-    return @{};
-}
-
-+ (id)spamSignalsDictionaryWithoutIDFA {
-    return @{};
-}
++ (id)spamSignalsDictionary { return @{}; }
++ (id)spamSignalsDictionaryWithoutIDFA { return @{}; }
 %end
 
 %hook YTDataUtils
-+ (id)spamSignalsDictionary {
-    return @{ @"ms": @"" };
-}
-
-+ (id)spamSignalsDictionaryWithoutIDFA {
-    return @{};
-}
++ (id)spamSignalsDictionary { return @{ @"ms": @"" }; }
++ (id)spamSignalsDictionaryWithoutIDFA { return @{}; }
 %end
 
 %hook YTAdsInnerTubeContextDecorator
-- (void)decorateContext:(id)context {
-    %orig(nil);
-}
+- (void)decorateContext:(id)context { %orig(nil); }
 %end
 
 %hook YTAccountScopedAdsInnerTubeContextDecorator
-- (void)decorateContext:(id)context {
-    %orig(nil);
-}
+- (void)decorateContext:(id)context { %orig(nil); }
 %end
 
 %hook YTLocalPlaybackController
-- (id)createAdsPlaybackCoordinator {
-    return nil;
-}
+- (id)createAdsPlaybackCoordinator { return nil; }
 %end
 
 %hook MDXSession
@@ -263,22 +121,59 @@ static NSMutableArray *filteredArray(NSArray *array) {
 - (void)adPlaying:(id)ad {}
 %end
 
+// ===== TEMPORARY DIAGNOSTIC - remove after testing =====
+static NSMutableDictionary *YMTally;
+static NSHashTable *YMSeen;
+static UILabel *YMDiagLabel;
+
+static void YMDiagShow(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *window = nil;
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+            for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+                if (w.isKeyWindow) { window = w; break; }
+            }
+            if (window) break;
+        }
+        if (!window) return;
+        if (!YMDiagLabel) {
+            YMDiagLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 70, 230, 130)];
+            YMDiagLabel.numberOfLines = 0;
+            YMDiagLabel.font = [UIFont boldSystemFontOfSize:14];
+            YMDiagLabel.textColor = [UIColor yellowColor];
+            YMDiagLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.8];
+            YMDiagLabel.userInteractionEnabled = NO;
+        }
+        if (YMDiagLabel.superview != window) [window addSubview:YMDiagLabel];
+        [window bringSubviewToFront:YMDiagLabel];
+        NSMutableString *text = [NSMutableString stringWithString:@"SHORTS DIAG\n"];
+        NSInteger total = 0;
+        for (NSNumber *k in [YMTally.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+            [text appendFormat:@"type %@  x%@\n", k, YMTally[k]];
+            total += [YMTally[k] integerValue];
+        }
+        [text appendFormat:@"total %ld", (long)total];
+        YMDiagLabel.text = text;
+    });
+}
+
+static void YMDiagRecord(YTReelModel *model) {
+    if (!model) return;
+    if (![model respondsToSelector:@selector(videoType)]) return;
+    if (!YMTally) YMTally = [NSMutableDictionary dictionary];
+    if (!YMSeen) YMSeen = [NSHashTable weakObjectsHashTable];
+    if ([YMSeen containsObject:model]) return;
+    [YMSeen addObject:model];
+    NSNumber *key = @((NSInteger)model.videoType);
+    YMTally[key] = @([YMTally[key] integerValue] + 1);
+    YMDiagShow();
+}
+
 %hook YTReelDataSource
 - (YTReelModel *)makeContentModelForEntry:(id)entry {
     YTReelModel *model = %orig;
-    if ([model respondsToSelector:@selector(videoType)] && model.videoType == 3) {
-        return nil;
-    }
-    return model;
-}
-%end
-
-%hook YTReelContentModel
-+ (YTReelModel *)makeContentModelForEntry:(id)entry {
-    YTReelModel *model = %orig;
-    if ([model respondsToSelector:@selector(videoType)] && model.videoType == 3) {
-        return nil;
-    }
+    YMDiagRecord(model);
     return model;
 }
 %end
@@ -286,19 +181,15 @@ static NSMutableArray *filteredArray(NSArray *array) {
 %hook YTReelInfinitePlaybackDataSource
 - (YTReelModel *)makeContentModelForEntry:(id)entry {
     YTReelModel *model = %orig;
-    if ([model respondsToSelector:@selector(videoType)] && model.videoType == 3) {
-        return nil;
-    }
+    YMDiagRecord(model);
     return model;
 }
-
 - (void)setReels:(NSMutableOrderedSet *)reels {
-    [reels removeObjectsAtIndexes:[reels indexesOfObjectsPassingTest:^BOOL(YTReelModel *obj, NSUInteger idx, BOOL *stop) {
-        return [obj respondsToSelector:@selector(videoType)] ? obj.videoType == 3 : NO;
-    }]];
+    for (YTReelModel *obj in reels) YMDiagRecord(obj);
     %orig;
 }
 %end
+// ===== END TEMPORARY DIAGNOSTIC =====
 
 %hook YTWatchNextResponseViewController
 - (void)loadWithModel:(YTIWatchNextResponse *)model {
@@ -310,20 +201,15 @@ static NSMutableArray *filteredArray(NSArray *array) {
             return isProductList(command);
         }]];
     }
-
-    if (isProductList(onUiReady)) {
+    if (isProductList(onUiReady))
         model.onUiReady = nil;
-    }
-
     %orig;
 }
 %end
 
 %hook YTMainAppVideoPlayerOverlayViewController
 - (void)playerOverlayProvider:(YTPlayerOverlayProvider *)provider didInsertPlayerOverlay:(YTPlayerOverlay *)overlay {
-    if ([[overlay overlayIdentifier] isEqualToString:@"player_overlay_product_in_video"]) {
-        return;
-    }
+    if ([[overlay overlayIdentifier] isEqualToString:@"player_overlay_product_in_video"]) return;
     %orig;
 }
 %end
@@ -334,7 +220,6 @@ static NSMutableArray *filteredArray(NSArray *array) {
     [self setValue:filteredArray(sectionRenderers) forKey:@"_sectionRenderers"];
     %orig;
 }
-
 - (void)addSectionsFromArray:(NSArray *)array {
     %orig(filteredArray(array));
 }
@@ -343,25 +228,18 @@ static NSMutableArray *filteredArray(NSArray *array) {
 %hook _ASDisplayView
 - (void)didMoveToWindow {
     %orig;
-
-    if ([self.accessibilityIdentifier isEqualToString:@"eml.expandable_metadata.vpp"]) {
-        [self removeFromSuperview];
-    }
-
-    if ([self.accessibilityIdentifier isEqualToString:@"eml.ad_layout.full_width_square_image_layout"]) {
-        self.hidden = YES;
-    }
-
-    // AsyncDisplayKit-backed Shorts labels often expose ad status through accessibility metadata.
-    YouModTrySeamlessShortsAdSkip(self, nil);
+    if ([self.accessibilityIdentifier isEqualToString:@"eml.expandable_metadata.vpp"]) [self removeFromSuperview];
+    if ([self.accessibilityIdentifier isEqualToString:@"eml.ad_layout.full_width_square_image_layout"]) self.hidden = YES;
 }
 %end
 
 // NoYTPremium - @PoomSmart https://github.com/PoomSmart/NoYTPremium
+// Alert
 %hook YTCommerceEventGroupHandler
 - (void)addEventHandlers {}
 %end
 
+// Full-screen
 %hook YTInterstitialPromoEventGroupHandler
 - (void)addEventHandlers {}
 %end
@@ -371,46 +249,31 @@ static NSMutableArray *filteredArray(NSArray *array) {
 %end
 
 %hook YTPromoThrottleController
-- (BOOL)canShowThrottledPromo {
-    return NO;
-}
-
-- (BOOL)canShowThrottledPromoWithFrequencyCap:(id)arg1 {
-    return NO;
-}
-
-- (BOOL)canShowThrottledPromoWithFrequencyCaps:(id)arg1 {
-    return NO;
-}
+- (BOOL)canShowThrottledPromo { return NO; }
+- (BOOL)canShowThrottledPromoWithFrequencyCap:(id)arg1 { return NO; }
+- (BOOL)canShowThrottledPromoWithFrequencyCaps:(id)arg1 { return NO; }
 %end
 
 %hook YTPromoThrottleControllerImpl
-- (BOOL)canShowThrottledPromo {
-    return NO;
-}
-
-- (BOOL)canShowThrottledPromoWithFrequencyCap:(id)arg1 {
-    return NO;
-}
-
-- (BOOL)canShowThrottledPromoWithFrequencyCaps:(id)arg1 {
-    return NO;
-}
+- (BOOL)canShowThrottledPromo { return NO; }
+- (BOOL)canShowThrottledPromoWithFrequencyCap:(id)arg1 { return NO; }
+- (BOOL)canShowThrottledPromoWithFrequencyCaps:(id)arg1 { return NO; }
 %end
 
 %hook YTIShowFullscreenInterstitialCommand
 - (BOOL)shouldThrottleInterstitial {
-    if (self.hasModalClientThrottlingRules) {
+    if (self.hasModalClientThrottlingRules)
         self.modalClientThrottlingRules.oncePerTimeWindow = YES;
-    }
     return %orig;
 }
 %end
 
+// "Try new features" in settings
 %hook YTSettingsSectionItemManager
 - (void)updatePremiumEarlyAccessSectionWithEntry:(id)arg1 {}
 %end
 
+// Survey
 %hook YTSurveyController
 - (void)showSurveyWithRenderer:(id)arg1 surveyParentResponder:(id)arg2 {}
 %end

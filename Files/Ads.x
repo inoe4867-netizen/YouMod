@@ -1,5 +1,4 @@
 #import "Headers.h"
-#import <objc/runtime.h>
 
 // YouTube-X (https://github.com/PoomSmart/YouTube-X)
 static BOOL isProductList(YTICommand *command) {
@@ -13,12 +12,14 @@ static BOOL isProductList(YTICommand *command) {
 NSString *getAdString(NSString *description) {
     for (NSString *str in @[
         @"brand_promo",
+        @"brand_video_shelf",
         @"carousel_footered_layout",
         @"carousel_headered_layout",
         @"eml.expandable_metadata",
         @"feed_ad_metadata",
         @"full_width_portrait_image_layout",
         @"full_width_square_image_layout",
+        @"grid_ads_image_layout",
         @"landscape_image_wide_button_layout",
         @"post_shelf",
         @"product_carousel",
@@ -122,96 +123,23 @@ static NSMutableArray *filteredArray(NSArray *array) {
 - (void)adPlaying:(id)ad {}
 %end
 
-// ===== TEMPORARY DIAGNOSTIC - remove after testing =====
-static NSMutableDictionary *YMTally;
-static UILabel *YMDiagLabel;
-static NSInteger YMHitA;
-static NSInteger YMHitB;
-static NSInteger YMReelClassCount;
-static NSInteger YMTicks;
-
-static void YMCountReelClasses(void) {
-    unsigned int count = 0;
-    Class *classes = objc_copyClassList(&count);
-    NSInteger found = 0;
-    for (unsigned int i = 0; i < count; i++) {
-        const char *n = class_getName(classes[i]);
-        if (n && (strstr(n, "ReelDataSource") || strstr(n, "ReelInfinite"))) found++;
-    }
-    free(classes);
-    YMReelClassCount = found;
-}
-
-static NSString *YMDiagText(void) {
-    BOOL clsA = (%c(YTReelDataSource) != nil);
-    BOOL clsB = (%c(YTReelInfinitePlaybackDataSource) != nil);
-    BOOL selA = clsA && [%c(YTReelDataSource) instancesRespondToSelector:@selector(makeContentModelForEntry:)];
-    BOOL selB = clsB && [%c(YTReelInfinitePlaybackDataSource) instancesRespondToSelector:@selector(makeContentModelForEntry:)];
-
-    NSMutableString *text = [NSMutableString stringWithString:@"SHORTS DIAG v5\n"];
-    [text appendFormat:@"ticks %ld\n", (long)YMTicks];
-    [text appendFormat:@"clsA %@ selA %@ hitA %ld\n", clsA ? @"Y" : @"N", selA ? @"Y" : @"N", (long)YMHitA];
-    [text appendFormat:@"clsB %@ selB %@ hitB %ld\n", clsB ? @"Y" : @"N", selB ? @"Y" : @"N", (long)YMHitB];
-    [text appendFormat:@"reel-ish classes %ld\n", (long)YMReelClassCount];
-    NSInteger total = 0;
-    for (NSNumber *k in [[YMTally allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
-        [text appendFormat:@"type %@ x%@\n", k, YMTally[k]];
-        total += [YMTally[k] integerValue];
-    }
-    [text appendFormat:@"total %ld", (long)total];
-    return text;
-}
-
-static UIWindow *YMFindWindow(void) {
-    NSMutableArray *candidates = [NSMutableArray array];
-    for (id scene in [[UIApplication sharedApplication].connectedScenes allObjects]) {
-        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        for (UIWindow *w in [(UIWindowScene *)scene windows]) {
-            if (w && !w.hidden && w.alpha > 0.01) [candidates addObject:w];
-        }
-    }
-    for (UIWindow *w in candidates) {
-        if (w.isKeyWindow) return w;
-    }
-    return [candidates lastObject];
-}
-
-static void YMDiagRefresh(void) {
-    YMTicks++;
-    NSString *text = YMDiagText();
-
-    if (YMTicks % 5 == 0) {
-        [UIPasteboard generalPasteboard].string = text;
-    }
-
-    UIWindow *window = YMFindWindow();
-    if (!window) return;
-    if (!YMDiagLabel) {
-        YMDiagLabel = [[UILabel alloc] initWithFrame:CGRectMake(8, 60, 320, 210)];
-        YMDiagLabel.numberOfLines = 0;
-        YMDiagLabel.font = [UIFont boldSystemFontOfSize:12];
-        YMDiagLabel.textColor = [UIColor yellowColor];
-        YMDiagLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
-        YMDiagLabel.userInteractionEnabled = NO;
-        YMDiagLabel.layer.zPosition = 9999;
-    }
-    if (YMDiagLabel.superview != window) [window addSubview:YMDiagLabel];
-    [window bringSubviewToFront:YMDiagLabel];
-    YMDiagLabel.text = text;
-}
-
-static void YMDiagRecord(NSInteger type) {
-    if (!YMTally) YMTally = [NSMutableDictionary dictionary];
-    NSNumber *key = @(type);
-    YMTally[key] = @([YMTally[key] integerValue] + 1);
-}
-
 %hook YTReelDataSource
 - (YTReelModel *)makeContentModelForEntry:(id)entry {
     YTReelModel *model = %orig;
-    YMHitA++;
-    if (model && [model respondsToSelector:@selector(videoType)])
-        YMDiagRecord((NSInteger)model.videoType);
+    if ([model respondsToSelector:@selector(videoType)] && model.videoType == 3)
+        return nil;
+    return model;
+}
+%end
+
+// THE FIX - for newer YouTube versions (21.24.3+)
+// Upstream: https://github.com/PoomSmart/YouTube-X/pull/32
+// Note the "+" - this is a CLASS method, not an instance method.
+%hook YTReelContentModel
++ (YTReelModel *)makeContentModelForEntry:(id)entry {
+    YTReelModel *model = %orig;
+    if ([model respondsToSelector:@selector(videoType)] && model.videoType == 3)
+        return nil;
     return model;
 }
 %end
@@ -219,26 +147,17 @@ static void YMDiagRecord(NSInteger type) {
 %hook YTReelInfinitePlaybackDataSource
 - (YTReelModel *)makeContentModelForEntry:(id)entry {
     YTReelModel *model = %orig;
-    YMHitB++;
-    if (model && [model respondsToSelector:@selector(videoType)])
-        YMDiagRecord((NSInteger)model.videoType);
+    if ([model respondsToSelector:@selector(videoType)] && model.videoType == 3)
+        return nil;
     return model;
 }
-%end
-
-%ctor {
-    %init;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [UIPasteboard generalPasteboard].string = @"SHORTS DIAG v5\nctor ran, timer not yet started";
-    });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        YMCountReelClasses();
-        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {
-            YMDiagRefresh();
-        }];
-    });
+- (void)setReels:(NSMutableOrderedSet *)reels {
+    [reels removeObjectsAtIndexes:[reels indexesOfObjectsPassingTest:^BOOL(YTReelModel *obj, NSUInteger idx, BOOL *stop) {
+        return [obj respondsToSelector:@selector(videoType)] ? obj.videoType == 3 : NO;
+    }]];
+    %orig;
 }
-// ===== END TEMPORARY DIAGNOSTIC =====
+%end
 
 %hook YTWatchNextResponseViewController
 - (void)loadWithModel:(YTIWatchNextResponse *)model {

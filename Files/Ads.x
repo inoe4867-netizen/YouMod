@@ -32,7 +32,11 @@ NSString *getAdString(NSString *description) {
         @"text_image_button_layout",
         @"text_search_ad",
         @"video_display_full_layout",
-        @"video_display_full_buttoned_layout"
+        @"video_display_full_buttoned_layout",
+        // Reel ad identifiers - from stemgrade/YouTube-X (not in upstream)
+        @"ads.reels",
+        @"ads.reels.ad_metadata",
+        @"ads.reels.ad__card"
     ])
         if ([description containsString:str]) return str;
     return nil;
@@ -132,11 +136,18 @@ static NSMutableArray *filteredArray(NSArray *array) {
 }
 %end
 
-// THE FIX - for newer YouTube versions (21.24.3+)
-// Upstream: https://github.com/PoomSmart/YouTube-X/pull/32
-// Note the "+" - this is a CLASS method, not an instance method.
+// THE FIX - YouTube removed makeContentModelForEntry: from YTReelDataSource
+// as of YT 21.26.4 and relocated it to YTReelContentModel.
+// Both class and instance variants are hooked, matching PoomSmart/YouTube-X
+// PR #32. Whichever does not exist on your build simply fails to install.
 %hook YTReelContentModel
 + (YTReelModel *)makeContentModelForEntry:(id)entry {
+    YTReelModel *model = %orig;
+    if ([model respondsToSelector:@selector(videoType)] && model.videoType == 3)
+        return nil;
+    return model;
+}
+- (YTReelModel *)makeContentModelForEntry:(id)entry {
     YTReelModel *model = %orig;
     if ([model respondsToSelector:@selector(videoType)] && model.videoType == 3)
         return nil;
@@ -198,6 +209,8 @@ static NSMutableArray *filteredArray(NSArray *array) {
     %orig;
     if ([self.accessibilityIdentifier isEqualToString:@"eml.expandable_metadata.vpp"]) [self removeFromSuperview];
     if ([self.accessibilityIdentifier isEqualToString:@"eml.ad_layout.full_width_square_image_layout"]) self.hidden = YES;
+    // Reel ad views - same identifiers, caught at the view layer
+    if ([self.accessibilityIdentifier containsString:@"ads.reels"]) self.hidden = YES;
 }
 %end
 

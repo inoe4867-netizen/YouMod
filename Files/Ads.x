@@ -123,57 +123,61 @@ static NSMutableArray *filteredArray(NSArray *array) {
 
 // ===== TEMPORARY DIAGNOSTIC - remove after testing =====
 static NSMutableDictionary *YMTally;
-static NSHashTable *YMSeen;
 static UILabel *YMDiagLabel;
+static BOOL YMTimerStarted;
 
-static void YMDiagShow(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *window = nil;
-        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-            for (UIWindow *w in ((UIWindowScene *)scene).windows) {
-                if (w.isKeyWindow) { window = w; break; }
-            }
-            if (window) break;
+static void YMDiagRefresh(void) {
+    UIWindow *window = nil;
+    for (id scene in [[UIApplication sharedApplication].connectedScenes allObjects]) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *w in [(UIWindowScene *)scene windows]) {
+            if (w.isKeyWindow) { window = w; break; }
         }
-        if (!window) return;
-        if (!YMDiagLabel) {
-            YMDiagLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 70, 230, 130)];
-            YMDiagLabel.numberOfLines = 0;
-            YMDiagLabel.font = [UIFont boldSystemFontOfSize:14];
-            YMDiagLabel.textColor = [UIColor yellowColor];
-            YMDiagLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.8];
-            YMDiagLabel.userInteractionEnabled = NO;
-        }
-        if (YMDiagLabel.superview != window) [window addSubview:YMDiagLabel];
-        [window bringSubviewToFront:YMDiagLabel];
-        NSMutableString *text = [NSMutableString stringWithString:@"SHORTS DIAG\n"];
-        NSInteger total = 0;
-        for (NSNumber *k in [YMTally.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
-            [text appendFormat:@"type %@  x%@\n", k, YMTally[k]];
-            total += [YMTally[k] integerValue];
-        }
-        [text appendFormat:@"total %ld", (long)total];
-        YMDiagLabel.text = text;
+        if (window) break;
+    }
+    if (!window) return;
+    if (!YMDiagLabel) {
+        YMDiagLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 70, 230, 130)];
+        YMDiagLabel.numberOfLines = 0;
+        YMDiagLabel.font = [UIFont boldSystemFontOfSize:14];
+        YMDiagLabel.textColor = [UIColor yellowColor];
+        YMDiagLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.8];
+        YMDiagLabel.userInteractionEnabled = NO;
+    }
+    if (YMDiagLabel.superview != window) [window addSubview:YMDiagLabel];
+    [window bringSubviewToFront:YMDiagLabel];
+    NSMutableString *text = [NSMutableString stringWithString:@"SHORTS DIAG\n"];
+    NSInteger total = 0;
+    for (NSNumber *k in [[YMTally allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
+        [text appendFormat:@"type %@ x%@\n", k, YMTally[k]];
+        total += [YMTally[k] integerValue];
+    }
+    [text appendFormat:@"total %ld", (long)total];
+    YMDiagLabel.text = text;
+}
+
+static void YMStartTimer(void) {
+    if (YMTimerStarted) return;
+    YMTimerStarted = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {
+            YMDiagRefresh();
+        }];
     });
 }
 
-static void YMDiagRecord(YTReelModel *model) {
-    if (!model) return;
-    if (![model respondsToSelector:@selector(videoType)]) return;
+static void YMDiagRecord(NSInteger type) {
     if (!YMTally) YMTally = [NSMutableDictionary dictionary];
-    if (!YMSeen) YMSeen = [NSHashTable weakObjectsHashTable];
-    if ([YMSeen containsObject:model]) return;
-    [YMSeen addObject:model];
-    NSNumber *key = @((NSInteger)model.videoType);
+    NSNumber *key = @(type);
     YMTally[key] = @([YMTally[key] integerValue] + 1);
-    YMDiagShow();
+    YMStartTimer();
 }
 
 %hook YTReelDataSource
 - (YTReelModel *)makeContentModelForEntry:(id)entry {
     YTReelModel *model = %orig;
-    YMDiagRecord(model);
+    if (model && [model respondsToSelector:@selector(videoType)])
+        YMDiagRecord((NSInteger)model.videoType);
     return model;
 }
 %end
@@ -181,12 +185,9 @@ static void YMDiagRecord(YTReelModel *model) {
 %hook YTReelInfinitePlaybackDataSource
 - (YTReelModel *)makeContentModelForEntry:(id)entry {
     YTReelModel *model = %orig;
-    YMDiagRecord(model);
+    if (model && [model respondsToSelector:@selector(videoType)])
+        YMDiagRecord((NSInteger)model.videoType);
     return model;
-}
-- (void)setReels:(NSMutableOrderedSet *)reels {
-    for (YTReelModel *obj in reels) YMDiagRecord(obj);
-    %orig;
 }
 %end
 // ===== END TEMPORARY DIAGNOSTIC =====

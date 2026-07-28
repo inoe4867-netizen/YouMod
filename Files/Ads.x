@@ -148,7 +148,7 @@ static NSString *YMDiagText(void) {
     BOOL selA = clsA && [%c(YTReelDataSource) instancesRespondToSelector:@selector(makeContentModelForEntry:)];
     BOOL selB = clsB && [%c(YTReelInfinitePlaybackDataSource) instancesRespondToSelector:@selector(makeContentModelForEntry:)];
 
-    NSMutableString *text = [NSMutableString stringWithString:@"SHORTS DIAG v4\n"];
+    NSMutableString *text = [NSMutableString stringWithString:@"SHORTS DIAG v5\n"];
     [text appendFormat:@"ticks %ld\n", (long)YMTicks];
     [text appendFormat:@"clsA %@ selA %@ hitA %ld\n", clsA ? @"Y" : @"N", selA ? @"Y" : @"N", (long)YMHitA];
     [text appendFormat:@"clsB %@ selB %@ hitB %ld\n", clsB ? @"Y" : @"N", selB ? @"Y" : @"N", (long)YMHitB];
@@ -180,7 +180,6 @@ static void YMDiagRefresh(void) {
     YMTicks++;
     NSString *text = YMDiagText();
 
-    // Clipboard readout - works even if the overlay cannot draw.
     if (YMTicks % 5 == 0) {
         [UIPasteboard generalPasteboard].string = text;
     }
@@ -228,6 +227,10 @@ static void YMDiagRecord(NSInteger type) {
 %end
 
 %ctor {
+    %init;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [UIPasteboard generalPasteboard].string = @"SHORTS DIAG v5\nctor ran, timer not yet started";
+    });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         YMCountReelClasses();
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {

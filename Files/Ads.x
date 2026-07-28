@@ -124,7 +124,21 @@ static NSMutableArray *filteredArray(NSArray *array) {
 // ===== TEMPORARY DIAGNOSTIC - remove after testing =====
 static NSMutableDictionary *YMTally;
 static UILabel *YMDiagLabel;
-static BOOL YMTimerStarted;
+static NSInteger YMHitA;
+static NSInteger YMHitB;
+static NSInteger YMReelClassCount;
+
+static void YMCountReelClasses(void) {
+    unsigned int count = 0;
+    Class *classes = objc_copyClassList(&count);
+    NSInteger found = 0;
+    for (unsigned int i = 0; i < count; i++) {
+        const char *n = class_getName(classes[i]);
+        if (n && (strstr(n, "ReelDataSource") || strstr(n, "ReelInfinite"))) found++;
+    }
+    free(classes);
+    YMReelClassCount = found;
+}
 
 static void YMDiagRefresh(void) {
     UIWindow *window = nil;
@@ -137,16 +151,25 @@ static void YMDiagRefresh(void) {
     }
     if (!window) return;
     if (!YMDiagLabel) {
-        YMDiagLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 70, 230, 130)];
+        YMDiagLabel = [[UILabel alloc] initWithFrame:CGRectMake(8, 60, 320, 210)];
         YMDiagLabel.numberOfLines = 0;
-        YMDiagLabel.font = [UIFont boldSystemFontOfSize:14];
+        YMDiagLabel.font = [UIFont boldSystemFontOfSize:12];
         YMDiagLabel.textColor = [UIColor yellowColor];
-        YMDiagLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.8];
+        YMDiagLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
         YMDiagLabel.userInteractionEnabled = NO;
     }
     if (YMDiagLabel.superview != window) [window addSubview:YMDiagLabel];
     [window bringSubviewToFront:YMDiagLabel];
-    NSMutableString *text = [NSMutableString stringWithString:@"SHORTS DIAG\n"];
+
+    BOOL clsA = (%c(YTReelDataSource) != nil);
+    BOOL clsB = (%c(YTReelInfinitePlaybackDataSource) != nil);
+    BOOL selA = clsA && [%c(YTReelDataSource) instancesRespondToSelector:@selector(makeContentModelForEntry:)];
+    BOOL selB = clsB && [%c(YTReelInfinitePlaybackDataSource) instancesRespondToSelector:@selector(makeContentModelForEntry:)];
+
+    NSMutableString *text = [NSMutableString stringWithString:@"SHORTS DIAG v3\n"];
+    [text appendFormat:@"clsA %@  selA %@  hitA %ld\n", clsA ? @"Y" : @"N", selA ? @"Y" : @"N", (long)YMHitA];
+    [text appendFormat:@"clsB %@  selB %@  hitB %ld\n", clsB ? @"Y" : @"N", selB ? @"Y" : @"N", (long)YMHitB];
+    [text appendFormat:@"reel-ish classes: %ld\n", (long)YMReelClassCount];
     NSInteger total = 0;
     for (NSNumber *k in [[YMTally allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
         [text appendFormat:@"type %@ x%@\n", k, YMTally[k]];
@@ -156,26 +179,16 @@ static void YMDiagRefresh(void) {
     YMDiagLabel.text = text;
 }
 
-static void YMStartTimer(void) {
-    if (YMTimerStarted) return;
-    YMTimerStarted = YES;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {
-            YMDiagRefresh();
-        }];
-    });
-}
-
 static void YMDiagRecord(NSInteger type) {
     if (!YMTally) YMTally = [NSMutableDictionary dictionary];
     NSNumber *key = @(type);
     YMTally[key] = @([YMTally[key] integerValue] + 1);
-    YMStartTimer();
 }
 
 %hook YTReelDataSource
 - (YTReelModel *)makeContentModelForEntry:(id)entry {
     YTReelModel *model = %orig;
+    YMHitA++;
     if (model && [model respondsToSelector:@selector(videoType)])
         YMDiagRecord((NSInteger)model.videoType);
     return model;
@@ -185,11 +198,21 @@ static void YMDiagRecord(NSInteger type) {
 %hook YTReelInfinitePlaybackDataSource
 - (YTReelModel *)makeContentModelForEntry:(id)entry {
     YTReelModel *model = %orig;
+    YMHitB++;
     if (model && [model respondsToSelector:@selector(videoType)])
         YMDiagRecord((NSInteger)model.videoType);
     return model;
 }
 %end
+
+%ctor {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        YMCountReelClasses();
+        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {
+            YMDiagRefresh();
+        }];
+    });
+}
 // ===== END TEMPORARY DIAGNOSTIC =====
 
 %hook YTWatchNextResponseViewController

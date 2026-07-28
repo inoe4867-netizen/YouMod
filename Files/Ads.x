@@ -1,4 +1,5 @@
 #import "Headers.h"
+#import <objc/runtime.h>
 
 // YouTube-X (https://github.com/PoomSmart/YouTube-X)
 static BOOL isProductList(YTICommand *command) {
@@ -127,6 +128,7 @@ static UILabel *YMDiagLabel;
 static NSInteger YMHitA;
 static NSInteger YMHitB;
 static NSInteger YMReelClassCount;
+static NSInteger YMTicks;
 
 static void YMCountReelClasses(void) {
     unsigned int count = 0;
@@ -140,15 +142,50 @@ static void YMCountReelClasses(void) {
     YMReelClassCount = found;
 }
 
-static void YMDiagRefresh(void) {
-    UIWindow *window = nil;
+static NSString *YMDiagText(void) {
+    BOOL clsA = (%c(YTReelDataSource) != nil);
+    BOOL clsB = (%c(YTReelInfinitePlaybackDataSource) != nil);
+    BOOL selA = clsA && [%c(YTReelDataSource) instancesRespondToSelector:@selector(makeContentModelForEntry:)];
+    BOOL selB = clsB && [%c(YTReelInfinitePlaybackDataSource) instancesRespondToSelector:@selector(makeContentModelForEntry:)];
+
+    NSMutableString *text = [NSMutableString stringWithString:@"SHORTS DIAG v4\n"];
+    [text appendFormat:@"ticks %ld\n", (long)YMTicks];
+    [text appendFormat:@"clsA %@ selA %@ hitA %ld\n", clsA ? @"Y" : @"N", selA ? @"Y" : @"N", (long)YMHitA];
+    [text appendFormat:@"clsB %@ selB %@ hitB %ld\n", clsB ? @"Y" : @"N", selB ? @"Y" : @"N", (long)YMHitB];
+    [text appendFormat:@"reel-ish classes %ld\n", (long)YMReelClassCount];
+    NSInteger total = 0;
+    for (NSNumber *k in [[YMTally allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
+        [text appendFormat:@"type %@ x%@\n", k, YMTally[k]];
+        total += [YMTally[k] integerValue];
+    }
+    [text appendFormat:@"total %ld", (long)total];
+    return text;
+}
+
+static UIWindow *YMFindWindow(void) {
+    NSMutableArray *candidates = [NSMutableArray array];
     for (id scene in [[UIApplication sharedApplication].connectedScenes allObjects]) {
         if (![scene isKindOfClass:[UIWindowScene class]]) continue;
         for (UIWindow *w in [(UIWindowScene *)scene windows]) {
-            if (w.isKeyWindow) { window = w; break; }
+            if (w && !w.hidden && w.alpha > 0.01) [candidates addObject:w];
         }
-        if (window) break;
     }
+    for (UIWindow *w in candidates) {
+        if (w.isKeyWindow) return w;
+    }
+    return [candidates lastObject];
+}
+
+static void YMDiagRefresh(void) {
+    YMTicks++;
+    NSString *text = YMDiagText();
+
+    // Clipboard readout - works even if the overlay cannot draw.
+    if (YMTicks % 5 == 0) {
+        [UIPasteboard generalPasteboard].string = text;
+    }
+
+    UIWindow *window = YMFindWindow();
     if (!window) return;
     if (!YMDiagLabel) {
         YMDiagLabel = [[UILabel alloc] initWithFrame:CGRectMake(8, 60, 320, 210)];
@@ -157,25 +194,10 @@ static void YMDiagRefresh(void) {
         YMDiagLabel.textColor = [UIColor yellowColor];
         YMDiagLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
         YMDiagLabel.userInteractionEnabled = NO;
+        YMDiagLabel.layer.zPosition = 9999;
     }
     if (YMDiagLabel.superview != window) [window addSubview:YMDiagLabel];
     [window bringSubviewToFront:YMDiagLabel];
-
-    BOOL clsA = (%c(YTReelDataSource) != nil);
-    BOOL clsB = (%c(YTReelInfinitePlaybackDataSource) != nil);
-    BOOL selA = clsA && [%c(YTReelDataSource) instancesRespondToSelector:@selector(makeContentModelForEntry:)];
-    BOOL selB = clsB && [%c(YTReelInfinitePlaybackDataSource) instancesRespondToSelector:@selector(makeContentModelForEntry:)];
-
-    NSMutableString *text = [NSMutableString stringWithString:@"SHORTS DIAG v3\n"];
-    [text appendFormat:@"clsA %@  selA %@  hitA %ld\n", clsA ? @"Y" : @"N", selA ? @"Y" : @"N", (long)YMHitA];
-    [text appendFormat:@"clsB %@  selB %@  hitB %ld\n", clsB ? @"Y" : @"N", selB ? @"Y" : @"N", (long)YMHitB];
-    [text appendFormat:@"reel-ish classes: %ld\n", (long)YMReelClassCount];
-    NSInteger total = 0;
-    for (NSNumber *k in [[YMTally allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
-        [text appendFormat:@"type %@ x%@\n", k, YMTally[k]];
-        total += [YMTally[k] integerValue];
-    }
-    [text appendFormat:@"total %ld", (long)total];
     YMDiagLabel.text = text;
 }
 
